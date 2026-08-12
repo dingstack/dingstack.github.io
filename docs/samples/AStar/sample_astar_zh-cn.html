@@ -1,0 +1,95 @@
+<HTML>
+<HEAD>	
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=utf-8">	
+<META NAME="Generator" CONTENT="U++ HTML Package">	
+<TITLE>例子-A*算法</TITLE>
+<STYLE TYPE="text/css"><!--
+.A{margin:14px 0px 0px 0px;text-indent:0px;text-align:left;color:#000000;font-size:18pt;font-weight:bold;font-style:normal;}
+.B{margin:0px 0px 0px 0px;text-indent:0px;text-align:center;color:#000000;font-family:sans-serif;font-size:12pt;font-weight:normal;font-style:normal;}
+.C{margin:0px 0px 0px 0px;text-indent:0px;text-align:left;color:#000000;font-family:sans-serif;font-size:12pt;font-weight:normal;font-style:normal;}
+.D{margin:0px 0px 0px 0px;text-indent:0px;text-align:left;color:#000000;font-family:sans-serif;font-size:11pt;font-weight:normal;font-style:normal;}
+.E{font-size:12pt;}
+.F{margin:0px 0px 0px 63px;text-indent:0px;text-align:left;color:#000080;font-family:monospace;font-size:10pt;font-weight:normal;font-style:normal;}
+
+-->
+</STYLE>
+</HEAD><BODY><hr><p class="A">例子-A*算法</p>
+<p class="B"><a href="_0.png"><img src="_0.png" border="0" alt="" style="width: 269px; height: 289px"></a></p>
+<p class="C">&nbsp;</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;我们以A*算法为例，讲解如何使用ShmPathDB重新定义和使用A*算法，通过这个例子，能够对ShmPathDB有一个更加深刻的理解。</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;重点是我们的程序不用自己定义和编写数据结构，而是用ShmPathDB来构造所需的数据结构。</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;还有一点，我们将不使用open_set和close_set，而是直接使用一个树结构来表示，通过这个例子也许能够更好的理解A*算法。</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;例子代码使用Python实现，我们封装了Python对ShmPathDB访问的API。</p>
+<p class="B"><a href="_1.png"><img src="_1.png" border="0" alt="" style="width: 662px; height: 225px"></a></p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;如上图所示，A*算法用于找到一条从A点到B点的路径，中间灰色是障碍物。</p>
+<p class="D"><span class="E">&nbsp;&nbsp;&nbsp;&nbsp;A*算法的核心计算公式是：F</span> = G + H</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;G：从起点到当前节点的实际代价（已知）。</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;H：从当前节点到目标的启发式估计代价（预测）。</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;F：综合优先级，A*总是优先扩展F值最小的节点。</p>
+<p class="C">&nbsp;</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;A*大部分实现需要在程序内建立自己的数据结构以便于保存中间计算结果，这里我们直接使用ShmPathDB来构建数据结构和算法，而且我们不基于open_set和close_set，直接用ShmPathDB建立一个树结构作为探索树，并基于这个树结构来展开对路径的探索和扩展。目录节点上可以设置tag标志，我们通过设置节点tag标志为0表示该节点还没有扩展，tag标志为1表示已经扩展过。并且使用节点userdata保存g值和h值，userdata是32位整数，g保存在高16位，h保存在低16位，如果保存的数据较大，可以保存在其他地方，稍后我们会看到为了加快查找速度，我们把节点的id值保存在一个单独的string中，并通过x，y值索引到节点的id。我们可以看到，一个ShmPathDB的节点除了记录节点类型和数据外，还有较为丰富的设置参数，像tag，mode，userdata，mtime等。</p>
+<p class="C">&nbsp;</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;创建一个起始目录，这里把A当作起始的目录（具体的程序中，是以坐标点x_y的数值作为节点名字，例如5_5，并通过函数shmdb_add_child(0,&quot;5_5&quot;,&quot;dir&quot;)创建起始目录），并把A看做探索树的根节点。根据Manhattan距离计算公式计算A的G和H，并存到A节点userdata中。</p>
+<p class="C">&nbsp;</p>
+<p class="B"><a href="_2.png"><img src="_2.png" border="0" alt="" style="width: 662px; height: 225px"></a></p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;首先从起始目录开始，如果该目录没有子节点，并且tag为0，表示没有扩展过，那么首先扩展A。查找A周围的8个节点，这8个节点没有障碍物节点，并且通过遍历探索树，也没有在探索树中，因此把这8个节点添加为A的子节点，此时的探索树如上图所示。刚添加的8个子节点默认tag为0，至此，A已经扩展过了，因此设置节点A的tag为1。</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;我们注意到，探索树的叶子节点相当于open_set，非叶子节点相当于close_set，当下一次要找需要扩展的节点时，其实是在探索树的叶子节点上找的，似乎不用设置tag也能区别open_set和close_set，但是下面我们会看到，有些叶子节点扩展不出子节点，但又不希望再次处理它，因此需要再加一个tag标志来保证我们找的叶子节点就是需要扩展的节点。</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;下一步是从扩展的节点中寻找一个f值最小的节点进行扩展，这个过程通过遍历tag为0的叶子节点，找到f值最小的那个作为进一步扩展的节点。</p>
+<p class="B"><a href="_3.png"><img src="_3.png" border="0" alt="" style="width: 662px; height: 225px"></a></p>
+<p class="C">&nbsp;</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;通过对叶子节点的f值计算，4的值最小，我们选定它进行下一步的扩展。4的周围8个节点已经有5个是在探索树上的，还有右侧三个不在探索树上。对于右侧三个金色的节点，直接计算并加到探索树上变为4的子节点即可。</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;对于已在探索树上的2，3，A，5，6这5个节点，又分为两种情况。</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;1.对于A节点，因为它的tag是1，并且不是子节点，因此直接忽略。</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;2.对于其他四个叶子节点，根据A*算法的规则，我们的处理方法为，以A节点上方的2节点为例，计算出假设从4到2的g值Gnew，并和当前2的g值Gold进行比较。</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;如果Gnew&gt;=Gold，则不把2节点作为4号的子节点，因为旧的路径似乎更好，所以忽略它，保持现状。</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;如果Gnew&lt;Gold，则把2节点从探索树上A的子节点中删除，再把新的2号节点添加为4的子节点，注意，此时2的id值和g，h值都是新的。Gnew&lt;Gold说明新的路径比旧路径要好，所以删除旧路径，添加新路径。</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;依次扩展完这几个节点后，把目前扩展的4节点tag置为1，表示该节点已经探索完成。然后再从探索树中找一个最小的子节点，继续扩展。依次重复找最小子节点-&gt;扩展-&gt;找最小子节点-&gt;扩展...这一重复过程，直到扩展后的子节点中有目标节点为止。</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;如果在找最小子节点过程中，所有的叶子节点tag都为1，表示没有子节点可以扩展了，表示没有找到一条通往目标节点B的路径，返回失败。</p>
+<p class="B"><a href="_4.png"><img src="_4.png" border="0" alt="" style="width: 662px; height: 225px"></a></p>
+<p class="C">上图是我们扩展金色2节点后的状态，根据计算规则，我们下一步要选择的最小子节点应该是橙色2号，但是橙色2号右侧是障碍物，其他是已经存在的，经过上述步骤后，橙色2号没有子节点，并且tag也标记为1。所以橙色2号虽然是子节点，但在选择最小子节点这一步会跳过，选择橙色1作为扩展节点，并扩展出黄色1和2。</p>
+<p class="B"><a href="_5.png"><img src="_5.png" border="0" alt="" style="width: 662px; height: 225px"></a></p>
+<p class="C">&nbsp;</p>
+<p class="C">经过不断的扩展，上图中最终有一个扩展子节点会包含目标点B，此时会结束循环，然后按照这个重合的扩展子节点逆向不断的查找父节点（函数shmdb_get_parentid(childid)），直到父节点是A节点。这样就获得了从A到B的路径信息。主要的循环代码如下：</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;def search(self):</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.minF = 0;</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.minNode = 0</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;while True:</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.minF = 0;</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.minNode = 0</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;self.get_min_leafnode(self.from_id)</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;if self.minNode == 0:</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;print(&quot;Not path found!&quot;)</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return None</p>
+<p class="F">&nbsp;</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;bok = self.expand(self.minNode)</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;if bok == False:</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;break</p>
+<p class="C">&nbsp;</p>
+<p class="C">&nbsp;</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;我们提供了两个版本的python代码，astar.py和astar_quick.py。他们的区别是，在节点扩展过程中，需要判断周围扩展节点是否已经存在，在普通版本astar.py中是通过遍历探索树节点判断的，但是这个效率比较低。在astar_quick.py快速版本中，使用了一个string节点存储二进制数组的方式，把扩展的节点id值进行了存储，这样可以通过位置点的x，y坐标快速定位到某个存储位置，如果该位置的id值大于0，则表示该位置在探索树中，根据该id值可以快速的获取该节点的g，h值。这种方式增加了存储空间，大小是位图的长乘以宽再乘以4，一个id占用的4字节int型数据，但是却大大加快了查找速度。我们也可以以同样的方式把节点的其他信息保存在这样的二进制数组中，进一步提高A*算法的计算速度。快速版本能比普通版本快5倍左右。</p>
+<p class="F">def LoadImage(self, pathname)</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;......</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;w, h = self.map.shape;</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;self.image_w = w</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;self.image_h = h</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;idcache_size = w * h * 4;</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;self.idcache = shmdb_add_child(0, &quot;idcache&quot;, &quot;string&quot;)</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;shmdb_blob_set_empty(self.idcache, idcache_size)</p>
+<p class="F">&nbsp;</p>
+<p class="F">def SetPointCacheID(self, point, id):</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;index = point.y * self.image_w + point.x</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;bok = shmdb_blob_set_int(self.idcache, index, id)</p>
+<p class="F">&nbsp;</p>
+<p class="F">def GetPointCacheID(self, point):</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;index = point.y * self.image_w + point.x</p>
+<p class="F">&nbsp;&nbsp;&nbsp;&nbsp;return shmdb_blob_get_int(self.idcache, index)</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;首先通过函数shmdb_add_child()函数创建一个string节点，0表示创建在根目录下，然后调用函数shmdb_blob_set_empty()设置所需大小的内存空间并初始化内存空间为0。在使用时通过调用shmdb_blob_set_xxx()/shmdb_blob_get_xxx()系列函数进行写入和读取。</p>
+<p class="C">&nbsp;</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;注意：在运行python代码之前，首先要通过ShmPathDB的管理界面创建一个名为Newdb的内存数据，A*算法使用这个数据库进行计算。</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;通过A*算法在ShmPathDB上的实现，可以看到，不需要自己管理一个树结构，或者其他的数据结构，这实际上简化了算法编写的难度，同时基于共享内存的计算又在一定程度上保证了计算的效率。一个算法的实现，算法逻辑时一方面，但是如何设计和管理算法使用的数据结构，内存管理等等也是一个很复杂的问题，ShmPathDB简化了这一部分的难度，使得算法程序的注意力放在了算法逻辑上，这对算法的实现起到了巨大的推动作用。</p>
+<p class="C">&nbsp;&nbsp;&nbsp;&nbsp;还有一个优点时，我们可以通过ShmPathDB的管理界面，随时看到计算过程中的结果信息。</p>
+<p class="C">&nbsp;</p>
+<p class="C"><a href="_6.png"><img src="_6.png" border="0" alt="" style="width: 20px; height: 20px"></a></p>
+</BODY>
